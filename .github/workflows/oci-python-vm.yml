@@ -15,13 +15,14 @@ jobs:
     - name: Install OCI CLI and Dependencies
       run: |
         sudo apt-get update
-        sudo apt-get install -y unzip python3 python3-pip
+        sudo apt-get install -y unzip python3 python3-pip curl
 
-        curl -L https://raw.githubusercontent.com/oracle/oci-cli/master/scripts/install/install.sh > install.sh
+        curl -L https://raw.githubusercontent.com/oracle/oci-cli/master/scripts/install/install.sh -o install.sh
         chmod +x install.sh
         ./install.sh --accept-all-defaults <<< ''
 
         echo "$HOME/bin" >> $GITHUB_PATH
+        echo "PATH=$HOME/bin:$PATH" >> $GITHUB_ENV
 
     - name: Configure OCI CLI
       run: |
@@ -37,13 +38,15 @@ jobs:
         echo "region=${{ secrets.OCI_REGION }}" >> ~/.oci/config
 
         chmod 600 ~/.oci/config
-        echo "✅ OCI config and key file permissions fixed."
+        source $GITHUB_ENV
         oci --version
 
     - name: Launch Ubuntu VM
       id: launch_vm
       run: |
-        echo "Launching VM..."
+        source $GITHUB_ENV
+        echo "⏳ Launching VM..."
+
         AD=$(oci iam availability-domain list --compartment-id ${{ secrets.OCI_COMPARTMENT_OCID }} --query "data[0].name" --raw-output)
         IMAGE_ID=$(oci compute image list --compartment-id ${{ secrets.OCI_COMPARTMENT_OCID }} --query "data[?\"operating-system\"=='Canonical Ubuntu' && contains(\"operating-system-version\", '22.04')].id | [0]" --raw-output)
 
@@ -53,24 +56,27 @@ jobs:
           --shape "VM.Standard.E2.1.Micro" \
           --display-name "github-actions-vm" \
           --subnet-id ${{ secrets.OCI_SUBNET_OCID }} \
-          --image-id $IMAGE_ID \
+          --image-id "$IMAGE_ID" \
           --assign-public-ip true \
           --wait-for-state RUNNING \
           --query "data.id" --raw-output)
 
         echo "INSTANCE_ID=$INSTANCE_ID" >> $GITHUB_ENV
 
-    - name: Wait for Boot and Get Public IP
+    - name: Wait and Get Public IP
       run: |
-        sleep 60
+        source $GITHUB_ENV
+        echo "⏳ Waiting for VM..."
+        sleep 90
         PUBLIC_IP=$(oci compute instance list-vnics \
-          --instance-id $INSTANCE_ID \
+          --instance-id "$INSTANCE_ID" \
           --compartment-id ${{ secrets.OCI_COMPARTMENT_OCID }} \
           --query "data[0].\"public-ip\"" --raw-output)
-        echo "PUBLIC_IP=$PUBLIC_IP" >> $GITHUB_ENV
-        echo "🔗 VM Public IP: $PUBLIC_IP"
 
-    - name: Copy and Run Python Script via SSH
+        echo "PUBLIC_IP=$PUBLIC_IP" >> $GITHUB_ENV
+        echo "🌐 VM IP: $PUBLIC_IP"
+
+    - name: Copy and Run Python Code on VM
       uses: appleboy/ssh-action@v1.0.0
       with:
         host: ${{ env.PUBLIC_IP }}
@@ -78,14 +84,15 @@ jobs:
         key: ${{ secrets.SSH_PRIVATE_KEY }}
         script: |
           sudo apt update && sudo apt install -y python3
-          echo 'print("Hello from Oracle Cloud!")' > script.py
+          echo 'print("Hello from OCI VM!")' > script.py
           python3 script.py > result.txt
 
-    - name: Commit Output Back to Repo
+    - name: Commit Result to Repo
       run: |
-        git config --global user.name "GitHub Actions"
-        git config --global user.email "actions@github.com"
+        source $GITHUB_ENV
         scp -o StrictHostKeyChecking=no -i ~/.oci/oci_api_key.pem ${{ secrets.USERNAME }}@${{ env.PUBLIC_IP }}:~/result.txt .
+        git config user.name "GitHub Actions"
+        git config user.email "actions@github.com"
         git add result.txt
-        git commit -m "✅ Add result from OCI run"
+        git commit -m "✅ Result from OCI VM"
         git push
