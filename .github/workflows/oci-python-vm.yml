@@ -44,10 +44,12 @@ jobs:
     - name: Launch Ubuntu VM
       id: launch_vm
       run: |
-        source $GITHUB_ENV
-        echo "⏳ Launching VM..."
+        echo "Launching VM..."
+        echo "🟡 Debug: Listing availability domains"
+        oci iam availability-domain list --compartment-id ${{ secrets.OCI_COMPARTMENT_OCID }}
 
-        AD=$(oci iam availability-domain list --compartment-id ${{ secrets.OCI_COMPARTMENT_OCID }} --query "data[0].name" --raw-output)
+
+        AD=AD="bCfB:AP-MUMBAI-1-AD-1"
         IMAGE_ID=$(oci compute image list --compartment-id ${{ secrets.OCI_COMPARTMENT_OCID }} --query "data[?\"operating-system\"=='Canonical Ubuntu' && contains(\"operating-system-version\", '22.04')].id | [0]" --raw-output)
 
         INSTANCE_ID=$(oci compute instance launch \
